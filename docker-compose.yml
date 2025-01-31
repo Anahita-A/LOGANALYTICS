@@ -1,0 +1,79 @@
+# docker-compose.yml
+
+services:
+  # Single mock service to start with
+  order-service:
+    build: 
+      context: ./services/mock_log_generators
+      dockerfile: Dockerfile.order
+    environment:
+      - LOG_LEVEL=info
+      - ERROR_RATE=0.1
+      - ORDERS_PER_MINUTE=10
+    depends_on:
+      - fluentd
+
+  # Log collector
+  fluentd:
+    build:
+      context: ./config/fluentd
+      dockerfile: Dockerfile
+    image: fluent/fluentd:v1.14
+    volumes:
+      - ./config/fluentd:/fluentd/etc
+    ports:
+      - "24224:24224"
+    depends_on:
+      - minio-init
+
+  # Storage
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # MinIO bucket initialization
+  minio-init:
+    image: minio/mc
+    depends_on:
+      - minio
+    volumes:
+      - ./scripts:/scripts
+    entrypoint: ["/scripts/minio-init.sh"]      
+
+  search-api:
+    build:
+      context: ./services/search_api
+      dockerfile: Dockerfile
+    ports:
+      - "5005:5005"
+    environment:
+      - FLASK_ENV=development
+    depends_on:
+      - minio
+
+  search-ui:
+    build:
+      context: ./services/search_ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:5005
+    depends_on:
+      - search-api
+    
+volumes:
+  minio_data:
